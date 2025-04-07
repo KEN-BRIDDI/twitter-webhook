@@ -8,17 +8,18 @@ app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
 
-// ✅ テスト確認用 GETルート
+// ✅ GETルート確認用
 app.get('/', (req, res) => {
   res.send('✅ Webhook is live!');
 });
 
 // ✅ POSTリクエスト受信ルート
 app.post('/', async (req, res) => {
-  console.log("📩 受信データ：", req.body);
   const { tweetText, mediaId, row_index } = req.body;
   const text = tweetText;
   const image_id = mediaId;
+
+  console.log("📩 受信データ:", req.body);
 
   if (!text || !image_id) {
     return res.status(400).send({ error: 'Missing parameters' });
@@ -66,7 +67,11 @@ const oauth = {
   token_secret: process.env.ACCESS_SECRET
 };
 
-console.log("🌍 process.env:", process.env);
+console.log("🌍 process.env.API_KEY:", process.env.API_KEY);
+console.log("🌍 process.env.API_SECRET:", process.env.API_SECRET);
+console.log("🌍 process.env.ACCESS_TOKEN:", process.env.ACCESS_TOKEN);
+console.log("🌍 process.env.ACCESS_SECRET:", process.env.ACCESS_SECRET);
+
 console.log("🔑 読み込んだoauth情報:", oauth);
 
 const twitterRequest = async (url, method, params) => {
@@ -80,7 +85,7 @@ const twitterRequest = async (url, method, params) => {
   };
 
   console.log("🧩 oauth_params:", oauth_params);
-  
+
   const allParams = { ...oauth_params, ...params };
   const baseParams = Object.keys(allParams).sort().map(key => (
     `${encodeURIComponent(key)}=${encodeURIComponent(allParams[key])}`
