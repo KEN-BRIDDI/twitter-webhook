@@ -8,7 +8,7 @@ app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
 
-app.post('/twitter-post', async (req, res) => {
+app.post('/', async (req, res) => {
   const { text, image_id, row_index } = req.body;
 
   if (!text || !image_id) {
