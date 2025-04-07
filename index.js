@@ -8,6 +8,12 @@ app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
 
+// ✅ テスト確認用 GETルート
+app.get('/', (req, res) => {
+  res.send('✅ Webhook is live!');
+});
+
+// ✅ POSTリクエスト受信ルート
 app.post('/', async (req, res) => {
   const { text, image_id, row_index } = req.body;
 
