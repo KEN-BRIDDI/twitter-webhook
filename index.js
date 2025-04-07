@@ -66,6 +66,8 @@ const oauth = {
   token_secret: process.env.ACCESS_SECRET
 };
 
+console.log("🔑 読み込んだoauth情報:", oauth);
+
 const twitterRequest = async (url, method, params) => {
   const oauth_params = {
     oauth_consumer_key: oauth.consumer_key,
