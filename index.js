@@ -79,6 +79,8 @@ const twitterRequest = async (url, method, params) => {
     oauth_version: '1.0'
   };
 
+  console.log("🧩 oauth_params:", oauth_params);
+  
   const allParams = { ...oauth_params, ...params };
   const baseParams = Object.keys(allParams).sort().map(key => (
     `${encodeURIComponent(key)}=${encodeURIComponent(allParams[key])}`
