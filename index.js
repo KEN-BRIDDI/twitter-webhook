@@ -15,6 +15,7 @@ app.get('/', (req, res) => {
 
 // ✅ POSTリクエスト受信ルート
 app.post('/', async (req, res) => {
+  console.log("📩 受信データ：", req.body);
   const { text, image_id, row_index } = req.body;
 
   if (!text || !image_id) {
