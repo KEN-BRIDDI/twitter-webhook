@@ -1,8 +1,8 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const crypto = require('crypto'); // crypto は twitterRequest で使うので残す
-const fetch = require('node-fetch'); // fetch は twitterRequest で使うので残す
-const { URLSearchParams } = require('url'); // URLSearchParams も twitterRequest で使うので残す
+const crypto = require('crypto');
+const fetch = require('node-fetch');
+const { URLSearchParams } = require('url');
 
 const app = express();
 app.use(bodyParser.json());
@@ -42,58 +42,23 @@ app.post('/', async (req, res) => {
   const { tweetText, mediaId, row_index } = req.body;
   console.log("📩 Received data:", { text: tweetText ? 'Yes' : 'No', mediaId: mediaId ? 'Yes' : 'No', row_index }); // ★確認ポイント3
 
-  // --- ここから下の処理を一時的にコメントアウト ---
+  // --- Twitter/Google Drive 関連の処理はコメントアウトしたまま ---
   /*
-  if (!tweetText || !mediaId) {
-    console.error("❌ Missing parameters:", { tweetText, mediaId });
-    return res.status(400).json({ error: 'Missing parameters (tweetText or mediaId)' });
-  }
-
-  if (!oauth.consumer_key || !oauth.consumer_secret || !oauth.token || !oauth.token_secret) {
-    console.error('❌ Missing Twitter API credentials in environment variables!');
-    return res.status(500).json({ error: 'Server configuration error: Missing API credentials.' });
-  }
-
+  if (!tweetText || !mediaId) { ... }
+  if (!oauth.consumer_key || ...) { ... }
   console.log("🚦 Entering try block...");
-
   try {
     console.log("🚦 Inside try block, before Google Drive download...");
-    console.log(`📥 Downloading image from Google Drive (ID: ${mediaId})`);
-    const mediaUrl = `https://drive.google.com/uc?export=download&id=${mediaId}`;
-    // const mediaRes = await fetch(mediaUrl); // ★コメントアウト
-    console.log(`🚦 Google Drive fetch status: SKIPPED IN TEST MODE`); // ★変更
-    // if (!mediaRes.ok) { ... } // ★コメントアウト
-    // const mediaBuffer = await mediaRes.buffer(); // ★コメントアウト
-    // const mediaData = mediaBuffer.toString('base64'); // ★コメントアウト
-    const mediaData = "dGVzdA=="; // ダミーデータ (base64で "test" )
-    console.log(`✅ Image download SKIPPED. Using dummy data.`); // ★変更
-
-    console.log("⏳ Uploading media to Twitter...");
-    // const mediaUploadResult = await twitterRequest(...) // ★コメントアウト
-    const uploadedMediaId = "dummy_media_id_123"; // ダミーデータ
-    console.log(`✅ Media upload SKIPPED. Using dummy Media ID: ${uploadedMediaId}`); // ★変更
-
-    console.log("⏳ Posting tweet with media...");
-    // const tweetResult = await twitterRequest(...) // ★コメントアウト
-    const tweetResult = { id_str: "dummy_tweet_id_456" }; // ダミーデータ
-    console.log(`✅ Tweet post SKIPPED! Using dummy Tweet ID: ${tweetResult.id_str}`); // ★変更
-
-    res.status(200).json({ success: true, tweet_id: tweetResult.id_str, row_index, message: "Simple Test Mode OK" }); // ★変更
-
+    // ... (Google Driveダウンロード、Twitter API呼び出し部分はコメントアウトのまま) ...
+    res.status(200).json({ success: true, tweet_id: tweetResult.id_str, row_index, message: "Simple Test Mode OK" });
   } catch (e) {
-    console.log("🚦 Entered catch block.");
-    console.error('❌ An error occurred:', e);
-    // (エラーハンドリング部分はそのまま)
-    let errorMessage = 'An unexpected error occurred.';
-    let statusCode = 500;
-    // ... (エラー処理は変更なし) ...
-    res.status(statusCode).json({ error: errorMessage, details: e.toString(), row_index });
+    // ... (catchブロックはコメントアウトのまま) ...
   }
   */
   // --- コメントアウトここまで ---
 
   // ★★★ シンプルテスト用のレスポンス ★★★
-  console.log("✅ Reached end of Simple Test Mode handler. Sending success response.");
+  console.log("✅ Reached end of Simple Test Mode handler. Sending success response."); // ★確認ポイント4
   res.status(200).json({
     success: true,
     message: "Simple Test Mode executed successfully. Logging environment variables.",
@@ -103,38 +68,89 @@ app.post('/', async (req, res) => {
         accessTokenExists: typeof process.env.ACCESS_TOKEN === 'string' && process.env.ACCESS_TOKEN.length > 0,
         accessSecretExists: typeof process.env.ACCESS_SECRET === 'string' && process.env.ACCESS_SECRET.length > 0,
     },
-    row_index: row_index || null // GASから渡されたrow_indexを返す
+    row_index: row_index || null
   });
 
 });
 
-// --- Twitter APIリクエスト関数 (変更なし、ただし呼び出されないはず) ---
+// --- Twitter APIリクエスト関数 (今回は呼び出されないが、正しいコードに戻す) ---
 const twitterRequest = async (url, method, params) => {
-  console.warn("🚨 twitterRequest function called unexpectedly in Simple Test Mode!"); // 念のため警告
-  // (中身は変更なし)
-  const oauth_params = { /* ... */ };
-  const paramsForSignature = { /* ... */ };
-  const allParamsForSignature = { /* ... */ };
-  const baseParams = /* ... */ ;
-  const baseString = /* ... */ ;
-  const signingKey = /* ... */ ;
-  const signature = /* ... */ ;
-  const oauthHeaderParams = { /* ... */ };
-  const authHeader = /* ... */ ;
+  // console.warn("🚨 twitterRequest function called unexpectedly in Simple Test Mode!"); // シンプルテストでは呼ばれないはず
+
+  // OAuth認証に必要な基本パラメータ
+  const oauth_params = {
+    oauth_consumer_key: oauth.consumer_key,
+    oauth_nonce: crypto.randomBytes(16).toString('hex'),
+    oauth_signature_method: 'HMAC-SHA1',
+    oauth_timestamp: Math.floor(Date.now() / 1000).toString(),
+    oauth_token: oauth.token,
+    oauth_version: '1.0'
+  };
+
+  // 署名を作成
+  const paramsForSignature = { ...params };
+  if (url.includes('media/upload.json') && paramsForSignature.media_data) {
+    delete paramsForSignature.media_data;
+  }
+  const allParamsForSignature = { ...oauth_params, ...paramsForSignature };
+  const baseParams = Object.keys(allParamsForSignature).sort().map(key => (
+    `${encodeURIComponent(key)}=${encodeURIComponent(allParamsForSignature[key])}`
+  )).join('&');
+  const baseString = [
+    method.toUpperCase(),
+    encodeURIComponent(url),
+    encodeURIComponent(baseParams)
+  ].join('&');
+  const signingKey = `${encodeURIComponent(oauth.consumer_secret)}&${encodeURIComponent(oauth.token_secret)}`;
+  const signature = crypto.createHmac('sha1', signingKey).update(baseString).digest('base64');
+
+  // Authorizationヘッダーを作成
+  const oauthHeaderParams = { ...oauth_params, oauth_signature: signature };
+  const authHeader = 'OAuth ' + Object.keys(oauthHeaderParams).sort().map(key =>
+    `${encodeURIComponent(key)}="${encodeURIComponent(oauthHeaderParams[key])}"`
+  ).join(', ');
+
+  // リクエストオプションを設定
   let bodyContent;
   let contentTypeHeader = {};
-  const fetchOptions = { /* ... */ };
-  if (url.includes('media/upload.json')) { /* ... */ }
-  else if (method.toUpperCase() === 'POST') { /* ... */ }
-  if (bodyContent) { /* ... */ }
+  const fetchOptions = {
+    method,
+    headers: { Authorization: authHeader },
+  };
+  if (url.includes('media/upload.json')) {
+    contentTypeHeader['Content-Type'] = 'application/x-www-form-urlencoded';
+    bodyContent = new URLSearchParams(params).toString();
+  } else if (method.toUpperCase() === 'POST') {
+    contentTypeHeader['Content-Type'] = 'application/json';
+    bodyContent = JSON.stringify(params);
+  }
+  if (bodyContent) {
+    fetchOptions.headers = { ...fetchOptions.headers, ...contentTypeHeader };
+    fetchOptions.body = bodyContent;
+  }
+
   console.log(`🚀 Requesting to ${url}...`);
   const res = await fetch(url, fetchOptions);
   const responseText = await res.text();
   console.log(`✅ Response from ${url}: ${res.status} ${res.statusText}`);
   console.log("Raw response body:", responseText);
   let json;
-  try { /* ... */ } catch (e) { /* ... */ }
-  if (!res.ok) { /* ... */ }
+  try {
+    json = JSON.parse(responseText);
+  } catch (e) {
+    if (!res.ok) {
+      throw new Error(`API request failed (${res.status} ${res.statusText}): ${responseText}`);
+    } else if (responseText.trim() === '') {
+       return {};
+    } else {
+       console.warn("Response was successful but not valid JSON:", responseText);
+       return responseText;
+    }
+  }
+  if (!res.ok) {
+    console.error(`❌ Twitter API Error Response (${url}):`, JSON.stringify(json));
+    throw new Error(JSON.stringify(json));
+  }
   return json;
 };
 
