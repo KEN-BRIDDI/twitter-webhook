@@ -1,184 +1,128 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const crypto = require('crypto');
-const fetch = require('node-fetch');
-const { URLSearchParams } = require('url');
+const fetch = require('node-fetch'); // Google Driveからのダウンロードに必要
+const { TwitterApi } = require('twitter-api-v2'); // ★ Twitter API v2 ライブラリをインポート
+const { MimeType } = require('twitter-api-v2'); // ★ MimeType定数をインポート
 
 const app = express();
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 3000;
 
-// --- 環境変数読み込み ---
-const oauth = {
-  consumer_key: process.env.API_KEY,
-  consumer_secret: process.env.API_SECRET,
-  token: process.env.ACCESS_TOKEN,
-  token_secret: process.env.ACCESS_SECRET
-};
-// (起動時のログは省略)
+// --- Twitter API Client の初期化 ---
+// 環境変数からキーとトークンを読み込んでクライアントを設定
+const twitterClient = new TwitterApi({
+  appKey: process.env.API_KEY,
+  appSecret: process.env.API_SECRET,
+  accessToken: process.env.ACCESS_TOKEN,
+  accessSecret: process.env.ACCESS_SECRET,
+});
+
+// 読み書き可能なクライアントインスタンスを取得 (v1, v2 APIへのアクセス用)
+const rwClient = twitterClient.readWrite;
+console.log("Twitter API v2 client initialized.");
+
 
 // --- GETルート ---
 app.get('/', (req, res) => {
-  res.status(200).send('✅ Webhook is running!');
+  res.status(200).send('✅ Webhook is running! (Using twitter-api-v2)');
 });
 
-// --- POSTルート (本番処理) ---
+// --- POSTルート (API v2版) ---
 app.post('/', async (req, res) => {
-  // (ハンドラ冒頭のログは省略)
+  console.log("===== New Request Received (API v2) =====");
   const { tweetText, mediaId, row_index } = req.body;
   const text = tweetText;
-  const image_id = mediaId;
+  const image_id = mediaId; // Google Driveの画像ID
 
-  if (!text || !image_id) { /* ... エラー処理 ... */ }
-  if (!oauth.consumer_key || !oauth.consumer_secret || !oauth.token || !oauth.token_secret) { /* ... エラー処理 ... */ }
+  console.log("📩 Received data:", { text: text ? 'Yes' : 'No', image_id: image_id ? 'Yes' : 'No', row_index });
+
+  // パラメータチェック
+  if (!text || !image_id) {
+    console.error("❌ Missing parameters:", { text, image_id });
+    return res.status(400).json({ error: 'Missing parameters (tweetText or mediaId)' });
+  }
+
+  // 環境変数は client 初期化時にチェックされるが念のため
+  if (!process.env.API_KEY || !process.env.API_SECRET || !process.env.ACCESS_TOKEN || !process.env.ACCESS_SECRET) {
+     console.error('❌ Missing Twitter API credentials in environment variables!');
+     return res.status(500).json({ error: 'Server configuration error: Missing API credentials.' });
+  }
 
   try {
-    // 1. Google Driveから画像をダウンロード
-    // (ダウンロード処理は省略)
+    // 1. Google Driveから画像をダウンロード (ここは変更なし)
+    console.log(`📥 Downloading image from Google Drive (ID: ${image_id})`);
     const mediaUrl = `https://drive.google.com/uc?export=download&id=${image_id}`;
     const mediaRes = await fetch(mediaUrl);
-    if (!mediaRes.ok) { /* ... エラー処理 ... */ }
+
+    if (!mediaRes.ok) {
+        const errorText = await mediaRes.text();
+        console.error(`❌ Google Drive download failed! Status: ${mediaRes.status} ${mediaRes.statusText}, Response: ${errorText}`);
+        throw new Error(`Failed to download image from Google Drive: ${mediaRes.status} ${mediaRes.statusText}`);
+    }
+    // 画像データを Buffer として取得
     const mediaBuffer = await mediaRes.buffer();
-    const mediaData = mediaBuffer.toString('base64');
+    console.log(`✅ Image downloaded (Size: ${mediaBuffer.length} bytes)`);
 
-    // 2. Twitterに画像をアップロード (media/upload.json)
-    console.log("⏳ Uploading media to Twitter...");
-    const mediaUploadResult = await twitterRequest(
-      'https://upload.twitter.com/1.1/media/upload.json',
-      'POST',
-      { media_data: mediaData } // ★ media_data を渡す
-    );
-    const uploadedMediaId = mediaUploadResult.media_id_string;
-    if (!uploadedMediaId) { /* ... エラー処理 ... */ }
-    console.log(`✅ Media uploaded. Media ID: ${uploadedMediaId}`);
+    // ---- ここから twitter-api-v2 ライブラリを使用 ----
 
-    // 3. 画像付きツイートを投稿 (statuses/update.json)
-    console.log("⏳ Posting tweet with media...");
-    const tweetResult = await twitterRequest(
-      'https://api.twitter.com/1.1/statuses/update.json',
-      'POST',
-      { status: text, media_ids: uploadedMediaId } // ★ status と media_ids を渡す
-    );
-     if (!tweetResult.id_str) { /* ... エラー処理 ... */ }
-    console.log(`✅ Tweet posted! Tweet ID: ${tweetResult.id_str}`);
+    // 2. Twitterに画像をアップロード (ライブラリ経由で v1.1 API を利用)
+    console.log("⏳ Uploading media via twitter-api-v2 library...");
+    // 画像の種類を判別 (例: JPEGの場合) - 必要に応じてPNGなども判定
+    // Google DriveからContent-Typeを取得できればベストだが、一旦決め打ち
+    let mimeType = MimeType.Jpeg; // デフォルトをJPEGとする例
+    // もし他の形式も扱うなら、mediaRes.headers.get('content-type') 等で判定するロジックが必要
+    // 例: const contentType = mediaRes.headers.get('content-type');
+    // if (contentType === 'image/png') mimeType = MimeType.Png;
+    // else if (contentType === 'image/gif') mimeType = MimeType.Gif;
+    // else if (contentType === 'image/webp') mimeType = MimeType.Webp;
+
+    const uploadedMedia = await rwClient.v1.uploadMedia(mediaBuffer, { mimeType });
+    const uploadedMediaId = uploadedMedia.media_id_string; // v1.1 形式のメディアIDが返る
+    if (!uploadedMediaId) {
+        console.error("❌ Failed to get media_id_string from Twitter upload response:", uploadedMedia);
+        throw new Error('Failed to upload media to Twitter: media_id_string not found.');
+    }
+    console.log(`✅ Media uploaded via library. Media ID: ${uploadedMediaId}`);
+
+
+    // 3. 画像付きツイートを投稿 (API v2 エンドポイントを利用)
+    console.log("⏳ Posting v2 tweet via twitter-api-v2 library...");
+    const tweetResult = await rwClient.v2.tweet({
+      text: text, // ツイート本文
+      media: { media_ids: [uploadedMediaId] } // ★ v2形式でメディアIDを指定
+    });
+
+    // v2 のレスポンスは { data: { id: 'ツイートID', text: 'ツイート本文' } } のような形式
+    const tweetId = tweetResult.data?.id;
+    if (!tweetId) {
+         console.error("❌ Failed to get tweet id from Twitter v2 response:", tweetResult);
+         throw new Error('Failed to post tweet: Tweet ID not found in v2 response.');
+    }
+    console.log(`✅ v2 Tweet posted! Tweet ID: ${tweetId}`);
 
     // 4. GASに成功レスポンスを返す
-    console.log("🎉 Process completed successfully!");
-    res.status(200).json({ success: true, tweet_id: tweetResult.id_str, row_index });
+    console.log("🎉 Process completed successfully using API v2!");
+    res.status(200).json({ success: true, tweet_id: tweetId, row_index }); // v2のIDを返す
 
   } catch (e) {
-    // (エラー処理は省略)
-     console.error('❌ An error occurred during the process:', e);
-     // ... エラーレスポンス送信 ...
-     res.status(500).json({ error: e.toString(), row_index }); // シンプルなエラー返し
+    console.error('❌ An error occurred (API v2):', e);
+    // twitter-api-v2 はエラー時に詳細な情報を含むことがある
+    const statusCode = e.code || 500; // HTTPステータスコードが取れれば使う
+    let errorMessage = e.message || 'An unexpected error occurred.';
+    // APIからのエラーメッセージがあればそれを表示
+    if (e.data?.errors && e.data.errors.length > 0) {
+        errorMessage = `Twitter API Error: ${e.data.errors[0].message}`;
+        if (e.data.errors[0].parameters) {
+           errorMessage += ` (Parameter: ${JSON.stringify(e.data.errors[0].parameters)})`;
+        }
+    } else if (e.data?.detail) {
+         errorMessage = `Twitter API Error: ${e.data.detail}`;
+    }
+
+    res.status(statusCode).json({ error: errorMessage, details: e.toString(), row_index });
   }
 });
-
-// --- Twitter APIリクエスト関数 (詳細ログ追加バージョン) ---
-const twitterRequest = async (url, method, params) => {
-  console.log(`\n--- Preparing Twitter Request for: ${url} ---`); // リクエスト開始ログ
-
-  // OAuth認証に必要な基本パラメータ
-  const oauth_params = {
-    oauth_consumer_key: oauth.consumer_key,
-    oauth_nonce: crypto.randomBytes(16).toString('hex'),
-    oauth_signature_method: 'HMAC-SHA1',
-    oauth_timestamp: Math.floor(Date.now() / 1000).toString(),
-    oauth_token: oauth.token,
-    oauth_version: '1.0'
-  };
-  // ★★★ デバッグログ追加 1 ★★★
-  console.log("Debug Log 1: Basic OAuth Params:", oauth_params);
-
-  // --- 署名を作成 ---
-  const paramsForSignature = { ...params };
-  // media/upload.json で media_data を使う場合、署名ベース文字列から除外
-  if (url.includes('media/upload.json') && paramsForSignature.media_data) {
-      console.log("Debug Log 2: Excluding media_data from signature base string for media/upload.");
-      delete paramsForSignature.media_data;
-  }
-  // statuses/update.json の場合、statusとmedia_idsは署名に含める
-  const allParamsForSignature = { ...oauth_params, ...paramsForSignature };
-  // ★★★ デバッグログ追加 2 ★★★
-  console.log("Debug Log 3: All Params included in Signature Base:", allParamsForSignature);
-
-
-  // パラメータをキーでアルファベット順にソートし、"key=value" の形式でエンコードして'&'で結合
-  const baseParams = Object.keys(allParamsForSignature).sort().map(key => (
-    // 重要: キーも値も両方エンコードする
-    `${encodeURIComponent(key)}=${encodeURIComponent(allParamsForSignature[key])}`
-  )).join('&');
-  // ★★★ デバッグログ追加 3 ★★★
-  console.log("Debug Log 4: Parameter String (baseParams):", baseParams);
-
-  // 署名ベース文字列を作成 (HTTPメソッド & URLエンコードしたAPI URL & URLエンコードしたパラメータ文字列)
-  const baseString = [
-    method.toUpperCase(),
-    encodeURIComponent(url),
-    encodeURIComponent(baseParams) // パラメータ文字列全体をさらにエンコード
-  ].join('&');
-   // ★★★ デバッグログ追加 4 ★★★
-   console.log("Debug Log 5: Signature Base String (baseString):", baseString);
-
-  // 署名キーを作成 (コンシューマーシークレット & アクセストークンシークレット)
-  const signingKey = `${encodeURIComponent(oauth.consumer_secret)}&${encodeURIComponent(oauth.token_secret)}`;
-  // ★★★ デバッグログ追加 5 ★★★
-  // console.log("Debug Log 6: Signing Key (signingKey):", signingKey); // シークレットが含まれるので通常はログ出力しない
-
-  // HMAC-SHA1で署名し、Base64エンコード
-  const signature = crypto.createHmac('sha1', signingKey).update(baseString).digest('base64');
-   // ★★★ デバッグログ追加 6 ★★★
-   console.log("Debug Log 7: Generated Signature (signature):", signature);
-  // --- 署名作成完了 ---
-
-  // --- Authorizationヘッダーを作成 ---
-  const oauthHeaderParams = { ...oauth_params, oauth_signature: signature };
-  const authHeader = 'OAuth ' + Object.keys(oauthHeaderParams).sort().map(key =>
-    `${encodeURIComponent(key)}="${encodeURIComponent(oauthHeaderParams[key])}"`
-  ).join(', ');
-   // ★★★ デバッグログ追加 7 ★★★
-   console.log("Debug Log 8: Authorization Header (authHeader):", authHeader);
-  // --- Authorizationヘッダー作成完了 ---
-
-  // --- リクエストオプションを設定 ---
-  let bodyContent;
-  let contentTypeHeader = {};
-  const fetchOptions = {
-    method,
-    headers: { Authorization: authHeader },
-  };
-
-  if (url.includes('media/upload.json')) {
-    contentTypeHeader['Content-Type'] = 'application/x-www-form-urlencoded';
-    // params には media_data が含まれている前提
-    bodyContent = new URLSearchParams(params).toString();
-    console.log("Debug Log 9: Body for media/upload (urlencoded). Preview:", bodyContent.substring(0,100) + "...");
-  } else if (method.toUpperCase() === 'POST') {
-    contentTypeHeader['Content-Type'] = 'application/json';
-    // params には status, media_ids が含まれている前提
-    bodyContent = JSON.stringify(params);
-     console.log("Debug Log 10: Body for status update (JSON):", bodyContent);
-  }
-  if (bodyContent) {
-    fetchOptions.headers = { ...fetchOptions.headers, ...contentTypeHeader };
-    fetchOptions.body = bodyContent;
-  }
-  // --- リクエストオプション設定完了 ---
-
-  console.log(`🚀 Requesting to ${url}...`);
-  const res = await fetch(url, fetchOptions);
-  const responseText = await res.text();
-  console.log(`✅ Response from ${url}: ${res.status} ${res.statusText}`);
-  console.log("Raw response body:", responseText);
-
-  // (レスポンス処理は変更なし)
-  let json;
-  try { /* ... */ } catch (e) { /* ... */ }
-  if (!res.ok) { /* ... */ throw new Error(JSON.stringify(json)); }
-  return json;
-};
-
 
 // --- サーバー起動 ---
 app.listen(PORT, () => {
